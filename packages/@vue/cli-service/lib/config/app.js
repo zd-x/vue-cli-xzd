@@ -35,61 +35,37 @@ module.exports = (api, options) => {
 
     // code splitting
     if (process.env.NODE_ENV !== 'test') {
-      webpackConfig
-        .optimization.splitChunks({
-          cacheGroups: {
-            vendors: {
-              name: `chunk-vendors`,
-              test: /[\\/]node_modules[\\/]/,
-              priority: -10,
-              chunks: 'initial'
-            },
-            common: {
-              name: `chunk-common`,
-              minChunks: 2,
-              priority: -20,
-              chunks: 'initial',
-              reuseExistingChunk: true
-            }
+      webpackConfig.optimization.splitChunks({
+        cacheGroups: {
+          defaultVendors: {
+            name: `chunk-vendors`,
+            test: /[\\/]node_modules[\\/]/,
+            priority: -10,
+            chunks: 'initial'
+          },
+          common: {
+            name: `chunk-common`,
+            minChunks: 2,
+            priority: -20,
+            chunks: 'initial',
+            reuseExistingChunk: true
           }
-        })
+        }
+      })
     }
 
     // HTML plugin
     const resolveClientEnv = require('../util/resolveClientEnv')
 
-    // #1669 html-webpack-plugin's default sort uses toposort which cannot
-    // handle cyclic deps in certain cases. Monkey patch it to handle the case
-    // before we can upgrade to its 4.0 version (incompatible with preload atm)
-    const chunkSorters = require('html-webpack-plugin/lib/chunksorter')
-    const depSort = chunkSorters.dependency
-    chunkSorters.auto = chunkSorters.dependency = (chunks, ...args) => {
-      try {
-        return depSort(chunks, ...args)
-      } catch (e) {
-        // fallback to a manual sort if that happens...
-        return chunks.sort((a, b) => {
-          // make sure user entry is loaded last so user CSS can override
-          // vendor CSS
-          if (a.id === 'app') {
-            return 1
-          } else if (b.id === 'app') {
-            return -1
-          } else if (a.entry !== b.entry) {
-            return b.entry ? -1 : 1
-          }
-          return 0
-        })
-      }
-    }
-
     const htmlOptions = {
       title: api.service.pkg.name,
-      templateParameters: (compilation, assets, pluginOptions) => {
+      scriptLoading: 'defer',
+      templateParameters: (compilation, assets, assetTags, pluginOptions) => {
         // enhance html-webpack-plugin's built in template params
         let stats
         return Object.assign({
           // make stats lazy as it is expensive
+          // TODO: not sure if it's still needed as of <https://github.com/jantimon/html-webpack-plugin/issues/780#issuecomment-390651831>
           get webpack () {
             return stats || (stats = compilation.getStats().toJson())
           },
@@ -116,37 +92,9 @@ module.exports = (api, options) => {
         ])
     }
 
-    if (isProd) {
-      Object.assign(htmlOptions, {
-        minify: {
-          removeComments: true,
-          collapseWhitespace: true,
-          collapseBooleanAttributes: true,
-          removeScriptTypeAttributes: true
-          // more options:
-          // https://github.com/kangax/html-minifier#options-quick-reference
-        }
-      })
-
-      // keep chunk ids stable so async chunks have consistent hash (#1916)
-      webpackConfig
-        .plugin('named-chunks')
-          .use(require('webpack/lib/NamedChunksPlugin'), [chunk => {
-            if (chunk.name) {
-              return chunk.name
-            }
-
-            const hash = require('hash-sum')
-            const joinedHash = hash(
-              Array.from(chunk.modulesIterable, m => m.id).join('_')
-            )
-            return `chunk-` + joinedHash
-          }])
-    }
-
     // resolve HTML file(s)
     const HTMLPlugin = require('html-webpack-plugin')
-    const PreloadPlugin = require('@vue/preload-webpack-plugin')
+    // const PreloadPlugin = require('@vue/preload-webpack-plugin')
     const multiPageConfig = options.pages
     const htmlPath = api.resolve('public/index.html')
     const defaultHtmlPath = path.resolve(__dirname, 'index-default.html')
@@ -164,23 +112,24 @@ module.exports = (api, options) => {
         .plugin('html')
           .use(HTMLPlugin, [htmlOptions])
 
-      if (!isLegacyBundle) {
-        // inject preload/prefetch to HTML
-        webpackConfig
-          .plugin('preload')
-            .use(PreloadPlugin, [{
-              rel: 'preload',
-              include: 'initial',
-              fileBlacklist: [/\.map$/, /hot-update\.js$/]
-            }])
+      // FIXME: preload plugin is not compatible with webpack 5 / html-webpack-plugin 4 yet
+      // if (!isLegacyBundle) {
+      //   // inject preload/prefetch to HTML
+      //   webpackConfig
+      //     .plugin('preload')
+      //       .use(PreloadPlugin, [{
+      //         rel: 'preload',
+      //         include: 'initial',
+      //         fileBlacklist: [/\.map$/, /hot-update\.js$/]
+      //       }])
 
-        webpackConfig
-          .plugin('prefetch')
-            .use(PreloadPlugin, [{
-              rel: 'prefetch',
-              include: 'asyncChunks'
-            }])
-      }
+      //   webpackConfig
+      //     .plugin('prefetch')
+      //       .use(PreloadPlugin, [{
+      //         rel: 'prefetch',
+      //         include: 'asyncChunks'
+      //       }])
+      // }
     } else {
       // multi-page setup
       webpackConfig.entryPoints.clear()
@@ -241,36 +190,37 @@ module.exports = (api, options) => {
             .use(HTMLPlugin, [pageHtmlOptions])
       })
 
-      if (!isLegacyBundle) {
-        pages.forEach(name => {
-          const filename = ensureRelative(
-            outputDir,
-            normalizePageConfig(multiPageConfig[name]).filename || `${name}.html`
-          )
-          webpackConfig
-            .plugin(`preload-${name}`)
-              .use(PreloadPlugin, [{
-                rel: 'preload',
-                includeHtmlNames: [filename],
-                include: {
-                  type: 'initial',
-                  entries: [name]
-                },
-                fileBlacklist: [/\.map$/, /hot-update\.js$/]
-              }])
+      // FIXME: preload plugin is not compatible with webpack 5 / html-webpack-plugin 4 yet
+      // if (!isLegacyBundle) {
+      //   pages.forEach(name => {
+      //     const filename = ensureRelative(
+      //       outputDir,
+      //       normalizePageConfig(multiPageConfig[name]).filename || `${name}.html`
+      //     )
+      //     webpackConfig
+      //       .plugin(`preload-${name}`)
+      //         .use(PreloadPlugin, [{
+      //           rel: 'preload',
+      //           includeHtmlNames: [filename],
+      //           include: {
+      //             type: 'initial',
+      //             entries: [name]
+      //           },
+      //           fileBlacklist: [/\.map$/, /hot-update\.js$/]
+      //         }])
 
-          webpackConfig
-            .plugin(`prefetch-${name}`)
-              .use(PreloadPlugin, [{
-                rel: 'prefetch',
-                includeHtmlNames: [filename],
-                include: {
-                  type: 'asyncChunks',
-                  entries: [name]
-                }
-              }])
-        })
-      }
+      //     webpackConfig
+      //       .plugin(`prefetch-${name}`)
+      //         .use(PreloadPlugin, [{
+      //           rel: 'prefetch',
+      //           includeHtmlNames: [filename],
+      //           include: {
+      //             type: 'asyncChunks',
+      //             entries: [name]
+      //           }
+      //         }])
+      //   })
+      // }
     }
 
     // CORS and Subresource Integrity

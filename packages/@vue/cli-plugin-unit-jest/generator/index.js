@@ -12,7 +12,7 @@ module.exports = (api, options, rootOptions, invoking) => {
       'test:unit': 'vue-cli-service test:unit'
     },
     devDependencies: {
-      '@vue/test-utils': isVue3 ? '^2.0.0-0' : '^1.0.3'
+      '@vue/test-utils': isVue3 ? '^2.0.0-0' : '^1.1.3'
     },
     jest: {
       preset: api.hasPlugin('babel')
@@ -26,7 +26,7 @@ module.exports = (api, options, rootOptions, invoking) => {
       devDependencies: {
         'vue-jest': '^5.0.0-0',
         // vue-jest 5.0.0-alpha.1 requires typescript to be present
-        'typescript': '~3.9.3'
+        'typescript': '~4.1.2'
       },
       jest: {
         transform: {
@@ -71,7 +71,7 @@ const applyTS = (module.exports.applyTS = (api, invoking) => {
         : '@vue/cli-plugin-unit-jest/presets/typescript'
     },
     devDependencies: {
-      '@types/jest': '^24.0.19'
+      '@types/jest': '^26.0.20'
     }
   })
 

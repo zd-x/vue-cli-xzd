@@ -66,7 +66,7 @@ module.exports = (api, options) => {
         if (!process.env.VUE_CLI_TEST && options.devServer.progress !== false) {
           webpackConfig
             .plugin('progress')
-            .use(require('webpack/lib/ProgressPlugin'))
+            .use(webpack.ProgressPlugin)
         }
       }
     })
@@ -175,6 +175,10 @@ module.exports = (api, options) => {
       clientLogLevel: 'silent',
       historyApiFallback: {
         disableDotRule: true,
+        htmlAcceptHeaders: [
+          'text/html',
+          'application/xhtml+xml'
+        ],
         rewrites: genHistoryApiFallbackRewrites(options.publicPath, options.pages)
       },
       contentBase: api.resolve('public'),
