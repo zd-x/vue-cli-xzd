@@ -1,3 +1,4 @@
+/** @type {import('@vue/cli').GeneratorPlugin} */
 module.exports = (api, options, rootOptions, invoking) => {
   const isVue3 = rootOptions && rootOptions.vueVersion === '3'
 
@@ -7,8 +8,16 @@ module.exports = (api, options, rootOptions, invoking) => {
     hasRouter: api.hasPlugin('router')
   })
 
+  const { semver } = require('@vue/cli-shared-utils')
+  const cliServiceVersion = require('@vue/cli-service/package.json').version
+  if (semver.gte(cliServiceVersion, '5.0.0-0')) {
+    // mochapack currently does not support webpack 5 yet
+    require('@vue/cli-plugin-webpack-4/generator')(api, {}, rootOptions, invoking)
+  }
+
   api.extendPackage({
     devDependencies: {
+      '@vue/cli-plugin-webpack-4': require('../package.json').dependencies['@vue/cli-plugin-webpack-4'],
       '@vue/test-utils': isVue3 ? '^2.0.0-0' : '^1.1.0',
       'chai': '^4.2.0'
     },
@@ -47,7 +56,7 @@ const applyESLint = module.exports.applyESLint = api => {
 const applyTS = module.exports.applyTS = (api, invoking) => {
   api.extendPackage({
     devDependencies: {
-      '@types/mocha': '^7.0.2',
+      '@types/mocha': '^8.0.4',
       '@types/chai': '^4.2.11'
     }
   })

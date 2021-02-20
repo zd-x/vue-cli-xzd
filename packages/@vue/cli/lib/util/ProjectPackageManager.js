@@ -88,7 +88,7 @@ function stripVersion (packageName) {
 // extract the package scope from the full package name
 // the result includes the initial @ character
 function extractPackageScope (packageName) {
-  const scopedNameRegExp = /^(@[^\/]+)\/.*$/
+  const scopedNameRegExp = /^(@[^/]+)\/.*$/
   const result = packageName.match(scopedNameRegExp)
 
   if (!result) {
@@ -197,7 +197,7 @@ class PackageManager {
     return this._registries[cacheKey]
   }
 
-  async getAuthToken (scope) {
+  async getAuthConfig (scope) {
     // get npmrc (https://docs.npmjs.com/configuring-npm/npmrc.html#files)
     const possibleRcPaths = [
       path.resolve(this.context, '.npmrc'),
@@ -222,11 +222,21 @@ class PackageManager {
 
     const registry = await this.getRegistry(scope)
     const registryWithoutProtocol = registry
-      .replace(/https?:/, '')     // remove leading protocol
-      .replace(/([^/])$/, '$1/')  // ensure ending with slash
+      .replace(/https?:/, '') // remove leading protocol
+      .replace(/([^/])$/, '$1/') // ensure ending with slash
     const authTokenKey = `${registryWithoutProtocol}:_authToken`
+    const authUsernameKey = `${registryWithoutProtocol}:username`
+    const authPasswordKey = `${registryWithoutProtocol}:_password`
 
-    return npmConfig[authTokenKey]
+    const auth = {}
+    if (authTokenKey in npmConfig) {
+      auth.token = npmConfig[authTokenKey]
+    }
+    if (authPasswordKey in npmConfig) {
+      auth.username = npmConfig[authUsernameKey]
+      auth.password = Buffer.from(npmConfig[authPasswordKey], 'base64').toString()
+    }
+    return auth
   }
 
   async setRegistryEnvs () {
@@ -247,7 +257,7 @@ class PackageManager {
     }
 
     try {
-      // node-sass, chromedriver, etc.
+      // chromedriver, etc.
       const binaryMirrorConfigMetadata = await this.getMetadata('binary-mirror-config', { full: true })
       const latest = binaryMirrorConfigMetadata['dist-tags'] && binaryMirrorConfigMetadata['dist-tags'].latest
       const mirrors = binaryMirrorConfigMetadata.versions[latest].mirrors.china
@@ -267,10 +277,12 @@ class PackageManager {
       // Do not override user-defined env variable
       // Because we may construct a wrong download url and an escape hatch is necessary
       if (targetPlatform && !process.env.CYPRESS_INSTALL_BINARY) {
-        // We only support cypress 3 for the current major version
-        const latestCypressVersion = await this.getRemoteVersion('cypress', '^3')
-        process.env.CYPRESS_INSTALL_BINARY =
-          `${cypressMirror.host}/${latestCypressVersion}/${targetPlatform}/cypress.zip`
+        const projectPkg = resolvePkg(this.context)
+        if (projectPkg && projectPkg.devDependencies && projectPkg.devDependencies.cypress) {
+          const wantedCypressVersion = await this.getRemoteVersion('cypress', projectPkg.devDependencies.cypress)
+          process.env.CYPRESS_INSTALL_BINARY =
+            `${cypressMirror.host}/${wantedCypressVersion}/${targetPlatform}/cypress.zip`
+        }
       }
     } catch (e) {
       // get binary mirror config failed
@@ -294,9 +306,13 @@ class PackageManager {
       headers.Accept = 'application/vnd.npm.install-v1+json;q=1.0, application/json;q=0.9, */*;q=0.8'
     }
 
-    const authToken = await this.getAuthToken(scope)
-    if (authToken) {
-      headers.Authorization = `Bearer ${authToken}`
+    const authConfig = await this.getAuthConfig(scope)
+    if ('password' in authConfig) {
+      const credentials = Buffer.from(`${authConfig.username}:${authConfig.password}`).toString('base64')
+      headers.Authorization = `Basic ${credentials}`
+    }
+    if ('token' in authConfig) {
+      headers.Authorization = `Bearer ${authConfig.token}`
     }
 
     const url = `${registry.replace(/\/$/g, '')}/${packageName}`
@@ -331,8 +347,14 @@ class PackageManager {
   }
 
   async runCommand (command, args) {
+    const prevNodeEnv = process.env.NODE_ENV
+    // In the use case of Vue CLI, when installing dependencies,
+    // the `NODE_ENV` environment variable does no good;
+    // it only confuses users by skipping dev deps (when set to `production`).
+    delete process.env.NODE_ENV
+
     await this.setRegistryEnvs()
-    return await executeCommand(
+    await executeCommand(
       this.bin,
       [
         ...PACKAGE_MANAGER_CONFIG[this.bin][command],
@@ -340,21 +362,24 @@ class PackageManager {
       ],
       this.context
     )
+
+    if (prevNodeEnv) {
+      process.env.NODE_ENV = prevNodeEnv
+    }
   }
 
   async install () {
-    if (process.env.VUE_CLI_TEST) {
-      try {
-        process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = true
-        await this.runCommand('install', ['--offline', '--silent', '--no-progress'])
-        delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-      } catch (e) {
-        delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        await this.runCommand('install', ['--silent', '--no-progress'])
-      }
+    const args = []
+
+    if (this.needsPeerDepsFix) {
+      args.push('--legacy-peer-deps')
     }
 
-    return await this.runCommand('install', this.needsPeerDepsFix ? ['--legacy-peer-deps'] : [])
+    if (process.env.VUE_CLI_TEST) {
+      args.push('--silent', '--no-progress')
+    }
+
+    return await this.runCommand('install', args)
   }
 
   async add (packageName, {

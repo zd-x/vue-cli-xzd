@@ -1,18 +1,21 @@
 const fs = require('fs')
 const path = require('path')
 const debug = require('debug')
-const merge = require('webpack-merge')
+const { merge } = require('webpack-merge')
 const Config = require('webpack-chain')
 const PluginAPI = require('./PluginAPI')
 const dotenv = require('dotenv')
 const dotenvExpand = require('dotenv-expand')
 const defaultsDeep = require('lodash.defaultsdeep')
-const { chalk, warn, error, isPlugin, resolvePluginId, loadModule, resolvePkg } = require('@vue/cli-shared-utils')
+const { chalk, warn, error, isPlugin, resolvePluginId, loadModule, resolvePkg, resolveModule } = require('@vue/cli-shared-utils')
 
 const { defaults, validate } = require('./options')
+const checkWebpack = require('@vue/cli-service/lib/util/checkWebpack')
 
 module.exports = class Service {
   constructor (context, { plugins, pkg, inlineOptions, useBuiltIn } = {}) {
+    checkWebpack(context)
+
     process.VUE_CLI_SERVICE = this
     this.initialized = false
     this.context = context
@@ -35,7 +38,7 @@ module.exports = class Service {
     // resolve the default mode to use for each command
     // this is provided by plugins as module.exports.defaultModes
     // so we can get the information without actually applying the plugin.
-    this.modes = this.plugins.reduce((modes, { apply: { defaultModes }}) => {
+    this.modes = this.plugins.reduce((modes, { apply: { defaultModes } }) => {
       return Object.assign(modes, defaultModes)
     }, {})
   }
@@ -140,9 +143,9 @@ module.exports = class Service {
   }
 
   resolvePlugins (inlinePlugins, useBuiltIn) {
-    const idToPlugin = id => ({
+    const idToPlugin = (id, absolutePath) => ({
       id: id.replace(/^.\//, 'built-in:'),
-      apply: require(id)
+      apply: require(absolutePath || id)
     })
 
     let plugins
@@ -154,10 +157,11 @@ module.exports = class Service {
       './commands/help',
       // config plugins are order sensitive
       './config/base',
+      './config/assets',
       './config/css',
       './config/prod',
       './config/app'
-    ].map(idToPlugin)
+    ].map((id) => idToPlugin(id))
 
     if (inlinePlugins) {
       plugins = useBuiltIn !== false
@@ -172,18 +176,29 @@ module.exports = class Service {
             this.pkg.optionalDependencies &&
             id in this.pkg.optionalDependencies
           ) {
-            let apply = () => {}
-            try {
-              apply = require(id)
-            } catch (e) {
+            let apply = loadModule(id, this.pkgContext)
+            if (!apply) {
               warn(`Optional dependency ${id} is not installed.`)
+              apply = () => {}
             }
 
             return { id, apply }
           } else {
-            return idToPlugin(id)
+            return idToPlugin(id, resolveModule(id, this.pkgContext))
           }
         })
+
+      // Add the plugin automatically to simplify the webpack-4 tests
+      // so that a simple Jest alias would suffice, avoid changing every
+      // preset used in the tests
+      if (
+        process.env.VUE_CLI_TEST &&
+        process.env.VUE_CLI_USE_WEBPACK4 &&
+        !projectPlugins.some((p) => p.id === '@vue/cli-plugin-webpack-4')
+      ) {
+        builtInPlugins.push(idToPlugin('@vue/cli-plugin-webpack-4'))
+      }
+
       plugins = builtInPlugins.concat(projectPlugins)
     }
 
